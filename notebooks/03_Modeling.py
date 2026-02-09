@@ -3,6 +3,7 @@
 import os
 import pandas as pd
 import joblib
+import numpy as np
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -29,13 +30,16 @@ y = df["is_claim"]
 # --------------------------------------------------
 # 2. Encode categorical variables
 # --------------------------------------------------
+label_encoders = {}
+
 for col in X.select_dtypes(include="object").columns:
     le = LabelEncoder()
     X[col] = le.fit_transform(X[col])
+    label_encoders[col] = le  # stored if needed later
 
 
 # --------------------------------------------------
-# 3. Train-test split
+# 3. Train-test split (stratified)
 # --------------------------------------------------
 X_train, X_test, y_train, y_test = train_test_split(
     X,
@@ -54,26 +58,45 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 
 # --------------------------------------------------
-# 5. Define models
+# 5. Handle class imbalance
+# --------------------------------------------------
+# Ratio for XGBoost
+neg, pos = np.bincount(y_train)
+scale_pos_weight = neg / pos
+
+
+# --------------------------------------------------
+# 6. Define models (IMBALANCE FIXED)
 # --------------------------------------------------
 models = {
-    "LogisticRegression": LogisticRegression(max_iter=1000),
-    "DecisionTree": DecisionTreeClassifier(random_state=42),
+    "LogisticRegression": LogisticRegression(
+        max_iter=1000,
+        class_weight="balanced",
+        n_jobs=-1
+    ),
+
+    "DecisionTree": DecisionTreeClassifier(
+        class_weight="balanced",
+        random_state=42
+    ),
+
     "RandomForest": RandomForestClassifier(
         n_estimators=300,
+        class_weight="balanced",  # 🔥 KEY FIX
         random_state=42,
         n_jobs=-1
     ),
+
     "XGBoost": XGBClassifier(
         eval_metric="logloss",
-        use_label_encoder=False,
+        scale_pos_weight=scale_pos_weight,  # 🔥 KEY FIX
         random_state=42
     )
 }
 
 
 # --------------------------------------------------
-# 6. Train, evaluate, save models
+# 7. Train, evaluate, save models
 # --------------------------------------------------
 results = {}
 
@@ -81,28 +104,32 @@ print("\nStarting model training...\n")
 
 for name, model in models.items():
     print(f"Training {name}...")
-    
+
     model.fit(X_train, y_train)
-    
-    preds = model.predict(X_test)
-    
-    roc = roc_auc_score(y_test, preds)
-    f1 = f1_score(y_test, preds)
-    
+
+    # --- Probabilities (IMPORTANT) ---
+    y_prob = model.predict_proba(X_test)[:, 1]
+
+    # Default threshold (app will tune this later)
+    y_pred = (y_prob >= 0.5).astype(int)
+
+    roc = roc_auc_score(y_test, y_prob)
+    f1 = f1_score(y_test, y_pred)
+
     results[name] = {
         "ROC_AUC": roc,
         "F1_Score": f1
     }
-    
+
     model_path = os.path.join(MODELS_DIR, f"{name}.pkl")
     joblib.dump(model, model_path)
-    
+
     print(f"{name} saved to {model_path}")
-    print(f"ROC-AUC: {roc:.4f} | F1: {f1:.4f}\n")
+    print(f"ROC-AUC: {roc:.4f} | F1-Score: {f1:.4f}\n")
 
 
 # --------------------------------------------------
-# 7. Final comparison
+# 8. Final comparison
 # --------------------------------------------------
 results_df = pd.DataFrame(results).T.sort_values(
     by="ROC_AUC",

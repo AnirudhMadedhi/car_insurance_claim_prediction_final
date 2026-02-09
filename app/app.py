@@ -7,7 +7,7 @@ st.set_page_config(page_title="Car Insurance Claim Prediction", layout="centered
 # --------------------------------------------------
 # Load model
 # --------------------------------------------------
-MODEL_PATH = "models/RandomForest.pkl"
+MODEL_PATH = "models/XGBoost.pkl"
 model = joblib.load(MODEL_PATH)
 
 st.title("🚗 Car Insurance Claim Prediction")
