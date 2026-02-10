@@ -51,7 +51,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 # --------------------------------------------------
 # 4. Load trained model
 # --------------------------------------------------
-MODEL_PATH = "models/RandomForest.pkl"
+MODEL_PATH = "models/XGBoost.pkl"
 model = joblib.load(MODEL_PATH)
 
 
@@ -71,7 +71,7 @@ rec = recall_score(y_test, y_pred, zero_division=0)
 f1 = f1_score(y_test, y_pred)
 roc = roc_auc_score(y_test, y_prob)
 
-print("\nModel Evaluation Metrics (Random Forest)")
+print("\nModel Evaluation Metrics (XGBoost)")
 print("----------------------------------------")
 print(f"Accuracy  : {acc:.4f}")
 print(f"Precision : {prec:.4f}")
@@ -87,5 +87,5 @@ cm = confusion_matrix(y_test, y_pred)
 
 disp = ConfusionMatrixDisplay(confusion_matrix=cm)
 disp.plot(cmap="Blues")
-plt.title("Confusion Matrix - Random Forest")
+plt.title("Confusion Matrix - XGBoost")
 plt.show()

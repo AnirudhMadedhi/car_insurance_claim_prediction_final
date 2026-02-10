@@ -5,7 +5,7 @@ import pandas as pd
 import joblib
 import numpy as np
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import roc_auc_score, f1_score
 
@@ -35,7 +35,7 @@ label_encoders = {}
 for col in X.select_dtypes(include="object").columns:
     le = LabelEncoder()
     X[col] = le.fit_transform(X[col])
-    label_encoders[col] = le  # stored if needed later
+    label_encoders[col] = le
 
 
 # --------------------------------------------------
@@ -60,13 +60,12 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 # --------------------------------------------------
 # 5. Handle class imbalance
 # --------------------------------------------------
-# Ratio for XGBoost
 neg, pos = np.bincount(y_train)
 scale_pos_weight = neg / pos
 
 
 # --------------------------------------------------
-# 6. Define models (IMBALANCE FIXED)
+# 6. Define baseline models (unchanged)
 # --------------------------------------------------
 models = {
     "LogisticRegression": LogisticRegression(
@@ -82,35 +81,56 @@ models = {
 
     "RandomForest": RandomForestClassifier(
         n_estimators=300,
-        class_weight="balanced",  # 🔥 KEY FIX
+        class_weight="balanced",
         random_state=42,
         n_jobs=-1
-    ),
-
-    "XGBoost": XGBClassifier(
-        eval_metric="logloss",
-        scale_pos_weight=scale_pos_weight,  # 🔥 KEY FIX
-        random_state=42
     )
 }
 
 
 # --------------------------------------------------
-# 7. Train, evaluate, save models
+# 7. XGBoost with RandomizedSearchCV
+# --------------------------------------------------
+xgb = XGBClassifier(
+    eval_metric="logloss",
+    scale_pos_weight=scale_pos_weight,
+    random_state=42
+)
+
+param_dist = {
+    "n_estimators": [200, 300, 400],
+    "max_depth": [3, 4, 5],
+    "learning_rate": [0.03, 0.05, 0.1],
+    "subsample": [0.8, 0.9, 1.0],
+    "colsample_bytree": [0.8, 0.9, 1.0]
+}
+
+xgb_random = RandomizedSearchCV(
+    estimator=xgb,
+    param_distributions=param_dist,
+    n_iter=20,
+    scoring="roc_auc",
+    cv=5,
+    random_state=42,
+    n_jobs=-1,
+    verbose=1
+)
+
+
+# --------------------------------------------------
+# 8. Train, evaluate, save models
 # --------------------------------------------------
 results = {}
 
 print("\nStarting model training...\n")
 
+# ---- Train baseline models ----
 for name, model in models.items():
     print(f"Training {name}...")
 
     model.fit(X_train, y_train)
 
-    # --- Probabilities (IMPORTANT) ---
     y_prob = model.predict_proba(X_test)[:, 1]
-
-    # Default threshold (app will tune this later)
     y_pred = (y_prob >= 0.5).astype(int)
 
     roc = roc_auc_score(y_test, y_prob)
@@ -128,8 +148,34 @@ for name, model in models.items():
     print(f"ROC-AUC: {roc:.4f} | F1-Score: {f1:.4f}\n")
 
 
+# ---- Train XGBoost with RandomizedSearchCV ----
+print("Training XGBoost with RandomizedSearchCV...")
+
+xgb_random.fit(X_train, y_train)
+
+best_xgb = xgb_random.best_estimator_
+
+y_prob = best_xgb.predict_proba(X_test)[:, 1]
+y_pred = (y_prob >= 0.5).astype(int)
+
+roc = roc_auc_score(y_test, y_prob)
+f1 = f1_score(y_test, y_pred)
+
+results["XGBoost"] = {
+    "ROC_AUC": roc,
+    "F1_Score": f1
+}
+
+model_path = os.path.join(MODELS_DIR, "XGBoost.pkl")
+joblib.dump(best_xgb, model_path)
+
+print(f"XGBoost saved to {model_path}")
+print(f"ROC-AUC: {roc:.4f} | F1-Score: {f1:.4f}")
+print("Best XGBoost Params:", xgb_random.best_params_)
+
+
 # --------------------------------------------------
-# 8. Final comparison
+# 9. Final comparison
 # --------------------------------------------------
 results_df = pd.DataFrame(results).T.sort_values(
     by="ROC_AUC",
